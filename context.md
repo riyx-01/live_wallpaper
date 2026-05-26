@@ -20,14 +20,14 @@ The previous Vercel/Redis storage branch was removed from `server/database.js` s
 npm run dev
 ```
 
-This starts:
+This starts, using the default ports when available and automatically choosing nearby free ports when they are busy:
 
 | Service | URL |
 | --- | --- |
-| React/Vite app | `http://localhost:5173` |
-| Express API + Socket.io | `http://localhost:5000` |
+| React/Vite app | `http://localhost:5173` by default |
+| Express API + Socket.io | `http://localhost:5000` by default |
 
-`dev.js` also prints LAN URLs like `http://192.168.x.x:5173`. Another device on the same Wi-Fi can open that URL and use the same local realtime server.
+`dev.js` prints the exact local URL and LAN URLs. Another device on the same Wi-Fi can open the printed LAN URL and use the same local realtime server.
 
 ## Local Network Setup
 
@@ -35,8 +35,9 @@ Both local servers are arranged for LAN testing:
 
 - `server/server.js` listens on `0.0.0.0:5000`
 - `client/vite.config.js` uses `host: '0.0.0.0'`
+- `dev.js` finds free ports starting at `5000` for the backend and `5173` for the client
+- `dev.js` passes `BACKEND_URL` to Vite so `/api`, `/uploads`, and `/socket.io` proxy to the selected backend port
 - `dev.js` starts Vite with `--host 0.0.0.0`
-- Vite proxies `/api`, `/uploads`, and `/socket.io` to `http://localhost:5000`
 
 If another device cannot open the app, check Windows Firewall and allow Node.js/private-network access.
 
