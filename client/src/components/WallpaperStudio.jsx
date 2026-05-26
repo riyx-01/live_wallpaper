@@ -87,18 +87,31 @@ const CURATED_IMAGES = [
   { id: 'dream-10', label: 'Cloud Castles', url: 'https://images.unsplash.com/photo-1525083830203-05a543e5c1d9?auto=format&fit=crop&w=600&q=80', theme: 'Dreamy' }
 ];
 
-const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRoom }) => {
+const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRoom, socket }) => {
   const { room, member, members, activeWallpaper } = roomState;
   
   // Local state for Composer
   const [activeTab, setActiveTab] = useState('curated'); // 'curated' | 'gallery'
   const [selectedTheme, setSelectedTheme] = useState('All');
-  const [selectedImage, setSelectedImage] = useState(activeWallpaper?.image_url || CURATED_IMAGES[0].url);
+  
+  // Decoupled Background: Initialize background locally
+  const [selectedImage, setSelectedImage] = useState(() => {
+    return localStorage.getItem(`local_bg_${room.id}`) || activeWallpaper?.image_url || CURATED_IMAGES[0].url;
+  });
+
   const [message, setMessage] = useState(activeWallpaper?.message || '');
   const [font, setFont] = useState(activeWallpaper?.font || 'Serif');
   const [color, setColor] = useState(activeWallpaper?.color || '#FFFFFF');
   const [position, setPosition] = useState(activeWallpaper?.position || 'Center');
   const [previewFormat, setPreviewFormat] = useState('mobile'); // 'mobile' | 'laptop'
+
+  // Drawing Canvas States
+  const [strokes, setStrokes] = useState([]);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const canvasRef = useRef(null);
+  const currentPointsRef = useRef([]);
+  const autosaveTimerRef = useRef(null);
+  const lastPersistedSignatureRef = useRef('');
 
   // File Upload State
   const [uploading, setUploading] = useState(false);
@@ -115,19 +128,107 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
   const [isUpdating, setIsUpdating] = useState(false);
   const [isWiping, setIsWiping] = useState(false);
 
+  const getWallpaperSignature = (payload) => JSON.stringify({
+    image_url: payload.image_url || '',
+    message: payload.message || '',
+    font: payload.font || 'Serif',
+    color: payload.color || '#FFFFFF',
+    position: payload.position || 'Center',
+    scribbles: payload.scribbles || ''
+  });
+
+  const buildWallpaperPayload = (overrides = {}) => ({
+    image_url: selectedImage,
+    message: message.trim(),
+    font,
+    color,
+    position,
+    set_by: member.name,
+    scribbles: JSON.stringify(strokes),
+    ...overrides
+  });
+
+  const persistWallpaper = async ({ showModal = false, overrides = {} } = {}) => {
+    const payload = buildWallpaperPayload(overrides);
+    const signature = getWallpaperSignature(payload);
+
+    if (!showModal && signature === lastPersistedSignatureRef.current) {
+      return null;
+    }
+
+    const saved = await onSetWallpaper(payload);
+    lastPersistedSignatureRef.current = signature;
+
+    if (showModal) {
+      setShowPwaModal(true);
+    }
+
+    return saved;
+  };
+
+  // Local BG update wrapper
+  const updateLocalBg = (url) => {
+    setSelectedImage(url);
+    localStorage.setItem(`local_bg_${room.id}`, url);
+  };
+
   // Sync state if activeWallpaper changes externally
   useEffect(() => {
     if (activeWallpaper) {
-      if (activeWallpaper.image_url) setSelectedImage(activeWallpaper.image_url);
+      // NOTE: We DO NOT sync background image (activeWallpaper.image_url) anymore. Background is local!
       setMessage(activeWallpaper.message || '');
       setFont(activeWallpaper.font || 'Serif');
       setColor(activeWallpaper.color || '#FFFFFF');
       setPosition(activeWallpaper.position || 'Center');
+      
+      // Load saved scribbles
+      if (activeWallpaper.scribbles) {
+        try {
+          const parsed = JSON.parse(activeWallpaper.scribbles);
+          setStrokes(parsed);
+        } catch (e) {
+          console.error('Failed to parse activeWallpaper scribbles:', e);
+        }
+      } else {
+        setStrokes([]);
+      }
+
+      lastPersistedSignatureRef.current = getWallpaperSignature({
+        image_url: activeWallpaper.image_url,
+        message: activeWallpaper.message,
+        font: activeWallpaper.font,
+        color: activeWallpaper.color,
+        position: activeWallpaper.position,
+        scribbles: activeWallpaper.scribbles
+      });
     } else {
       // Clear composer if wiped
       setMessage('');
+      setStrokes([]);
+      lastPersistedSignatureRef.current = '';
     }
   }, [activeWallpaper]);
+
+  useEffect(() => {
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!message.trim() && strokes.length === 0 && !activeWallpaper) return;
+
+    const payload = buildWallpaperPayload();
+    const signature = getWallpaperSignature(payload);
+    if (signature === lastPersistedSignatureRef.current) return;
+
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      persistWallpaper().catch((error) => {
+        console.error('Autosave failed:', error);
+      });
+    }, 650);
+  }, [message, font, color, position]);
 
   // Categories/Themes lists
   const themes = ['All', 'Cloudy', 'Cozy', 'Nature', 'Minimal', 'Dreamy'];
@@ -135,6 +236,170 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
   const filteredCurated = selectedTheme === 'All'
     ? CURATED_IMAGES
     : CURATED_IMAGES.filter(img => img.theme === selectedTheme);
+
+  // Canvas drawing & scaling functions
+  useEffect(() => {
+    const handleResize = () => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * window.devicePixelRatio;
+      canvas.height = rect.height * window.devicePixelRatio;
+      redrawCanvas();
+    };
+
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [strokes, previewFormat]);
+
+  const redrawCanvas = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    strokes.forEach(stroke => {
+      if (!stroke.points || stroke.points.length < 2) return;
+      ctx.beginPath();
+      ctx.strokeStyle = stroke.color || '#FFFFFF';
+      ctx.lineWidth = (stroke.width || 4) * (canvas.width / 1000);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      
+      stroke.points.forEach((pt, idx) => {
+        const sx = (pt.x / 1000) * canvas.width;
+        const sy = (pt.y / 1000) * canvas.height;
+        if (idx === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      });
+      ctx.stroke();
+    });
+  };
+
+  const getCoordinates = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    
+    let clientX, clientY;
+    if (e.touches && e.touches.length > 0) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+    
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    
+    return {
+      x: (x / rect.width) * 1000,
+      y: (y / rect.height) * 1000
+    };
+  };
+
+  const startDrawing = (e) => {
+    const coords = getCoordinates(e);
+    if (!coords) return;
+    setIsDrawing(true);
+    currentPointsRef.current = [coords];
+  };
+
+  const draw = (e) => {
+    if (!isDrawing) return;
+    const coords = getCoordinates(e);
+    if (!coords) return;
+    
+    currentPointsRef.current.push(coords);
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    ctx.beginPath();
+    ctx.strokeStyle = color; // match composer color
+    ctx.lineWidth = 4 * (canvas.width / 1000);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    const pts = currentPointsRef.current;
+    const prevPt = pts[pts.length - 2];
+    const currPt = pts[pts.length - 1];
+    
+    if (prevPt && currPt) {
+      ctx.moveTo((prevPt.x / 1000) * canvas.width, (prevPt.y / 1000) * canvas.height);
+      ctx.lineTo((currPt.x / 1000) * canvas.width, (currPt.y / 1000) * canvas.height);
+      ctx.stroke();
+    }
+  };
+
+  const stopDrawing = () => {
+    if (!isDrawing) return;
+    setIsDrawing(false);
+    
+    if (currentPointsRef.current.length > 1) {
+      const newStroke = {
+        points: currentPointsRef.current,
+        color: color,
+        width: 4
+      };
+      
+      const updatedStrokes = [...strokes, newStroke];
+      setStrokes(updatedStrokes);
+      
+      if (socket) {
+        socket.emit('draw_stroke', { roomId: room.id, stroke: newStroke });
+      }
+
+      persistWallpaper({
+        overrides: { scribbles: JSON.stringify(updatedStrokes) }
+      }).catch((error) => {
+        console.error('Drawing autosave failed:', error);
+      });
+    }
+    currentPointsRef.current = [];
+  };
+
+  const handleMessageChange = (value) => {
+    setMessage(value);
+    if (socket) {
+      socket.emit('typing_sync', {
+        roomId: room.id,
+        data: {
+          message: value,
+          font,
+          color,
+          position
+        }
+      });
+    }
+  };
+
+  // Real-time socket events for drawing, typing, and wipes
+  useEffect(() => {
+    if (!socket) return;
+
+    socket.on('draw_stroke', (stroke) => {
+      setStrokes(prev => [...prev, stroke]);
+    });
+
+    socket.on('clear_scribbles', () => {
+      setStrokes([]);
+    });
+
+    socket.on('typing_sync', (data) => {
+      if (typeof data.message === 'string') setMessage(data.message);
+      if (data.font) setFont(data.font);
+      if (data.color) setColor(data.color);
+      if (data.position) setPosition(data.position);
+    });
+
+    return () => {
+      socket.off('draw_stroke');
+      socket.off('clear_scribbles');
+      socket.off('typing_sync');
+    };
+  }, [socket]);
 
   // Handle image upload to Express server
   const handleImageUpload = async (e) => {
@@ -168,8 +433,8 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
       setUserUploadedPhotos(updatedPhotos);
       localStorage.setItem(`uploads_${room.id}`, JSON.stringify(updatedPhotos));
       
-      // Auto select the newly uploaded image
-      setSelectedImage(data.url);
+      // Auto select and save the newly uploaded image locally
+      updateLocalBg(data.url);
     } catch (error) {
       console.error('Error uploading image:', error);
       alert(error.message || 'Failed to upload photo. Only JPG/PNG/GIF/WEBP allowed under 5MB.');
@@ -189,24 +454,15 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
     // Fallback if deleted image was selected
     const photoToDelete = userUploadedPhotos.find(p => p.id === id);
     if (photoToDelete && selectedImage === photoToDelete.url) {
-      setSelectedImage(CURATED_IMAGES[0].url);
+      updateLocalBg(CURATED_IMAGES[0].url);
     }
   };
 
-  // Set Wallpaper Action
+  // Set Wallpaper Action (Saves text and drawing scribbles)
   const handleSetWallpaperSubmit = async () => {
     setIsUpdating(true);
     try {
-      await onSetWallpaper({
-        image_url: selectedImage,
-        message: message.trim(),
-        font,
-        color,
-        position,
-        set_by: member.name
-      });
-      // Show PWA installation modal for screen wallpaper guidance
-      setShowPwaModal(true);
+      await persistWallpaper({ showModal: true });
     } catch (error) {
       console.error(error);
       alert('Failed to set wallpaper.');
@@ -217,11 +473,15 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
 
   // Wipe Wallpaper Action
   const handleWipeClick = async () => {
-    if (confirm('Clear the wallpaper note for everyone in the room?')) {
+    if (confirm('Clear the wallpaper note and scribbles for everyone in the room?')) {
       setIsWiping(true);
       try {
         await onWipeWallpaper();
         setMessage('');
+        setStrokes([]);
+        if (socket) {
+          socket.emit('clear_scribbles', { roomId: room.id });
+        }
       } catch (error) {
         console.error(error);
         alert('Failed to clear wallpaper.');
@@ -336,7 +596,7 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
                   {filteredCurated.map(img => (
                     <button
                       key={img.id}
-                      onClick={() => setSelectedImage(img.url)}
+                      onClick={() => updateLocalBg(img.url)}
                       className={`relative aspect-[9/16] rounded-xl overflow-hidden group border-2 transition-all ${
                         selectedImage === img.url
                           ? 'border-theme-primary scale-95 shadow-inner'
@@ -406,7 +666,7 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
                     {userUploadedPhotos.map(photo => (
                       <div
                         key={photo.id}
-                        onClick={() => setSelectedImage(photo.url)}
+                        onClick={() => updateLocalBg(photo.url)}
                         className={`relative aspect-[9/16] rounded-xl overflow-hidden group cursor-pointer border-2 transition-all ${
                           selectedImage === photo.url
                             ? 'border-theme-primary scale-95'
@@ -482,6 +742,19 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
                   className="absolute inset-0 w-full h-full object-cover"
                 />
 
+                {/* Synced Drawing Canvas Layer */}
+                <canvas
+                  ref={canvasRef}
+                  onMouseDown={startDrawing}
+                  onMouseMove={draw}
+                  onMouseUp={stopDrawing}
+                  onMouseLeave={stopDrawing}
+                  onTouchStart={startDrawing}
+                  onTouchMove={draw}
+                  onTouchEnd={stopDrawing}
+                  className="absolute inset-0 w-full h-full cursor-crosshair z-10 touch-none"
+                />
+
                 {/* Soft Vignette Overlay */}
                 <div className="absolute inset-0 wallpaper-vignette pointer-events-none"></div>
 
@@ -546,7 +819,7 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
                 <textarea
                   placeholder="Type something sweet..."
                   value={message}
-                  onChange={(e) => setMessage(e.target.value)}
+                  onChange={(e) => handleMessageChange(e.target.value)}
                   rows={3}
                   maxLength={150}
                   className="w-full glass-input px-4 py-3 rounded-2xl text-sm resize-none"
@@ -757,7 +1030,8 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
           </div>
         )}
       </div>
-    );
-  };
+    </div>
+  );
+};
 
-  export default WallpaperStudio;
+export default WallpaperStudio;

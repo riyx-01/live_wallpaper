@@ -6,6 +6,7 @@
   "main": "server/server.js",
   "scripts": {
     "install-all": "npm install && npm install --prefix server && npm install --prefix client",
+    "build": "npm run install-all && npm run build --prefix client",
     "server": "node server/server.js",
     "client": "node client/node_modules/vite/bin/vite.js --root client",
     "dev": "node dev.js",

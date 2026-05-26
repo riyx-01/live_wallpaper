@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { query } from './database.js';
+import { store } from './database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -80,7 +80,7 @@ async function generateUniqueRoomCode() {
     for (let i = 0; i < 6; i++) {
       code += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    const existing = await query.get('SELECT id FROM rooms WHERE code = ?', [code]);
+    const existing = await store.getRoomByCode(code);
     if (!existing) {
       return code;
     }
@@ -91,7 +91,7 @@ async function generateUniqueRoomCode() {
 
 // Helper to check and expire a wallpaper if its time is up
 async function checkWallpaperExpiry(roomId) {
-  const wallpaper = await query.get('SELECT * FROM wallpapers WHERE room_id = ?', [roomId]);
+  const wallpaper = await store.getWallpaper(roomId);
   if (!wallpaper) return null;
 
   const now = new Date();
@@ -99,7 +99,7 @@ async function checkWallpaperExpiry(roomId) {
 
   if (now > expiresAt) {
     // Expired! Delete wallpaper
-    await query.run('DELETE FROM wallpapers WHERE room_id = ?', [roomId]);
+    await store.deleteWallpaper(roomId);
     io.to(roomId).emit('wallpaper_wipe');
     return null;
   }
@@ -120,10 +120,7 @@ app.post('/api/rooms', async (req, res) => {
     const code = await generateUniqueRoomCode();
     const now = new Date().toISOString();
 
-    await query.run(
-      'INSERT INTO rooms (id, code, type, created_at) VALUES (?, ?, ?, ?)',
-      [roomId, code, type, now]
-    );
+    await store.createRoom({ id: roomId, code, type, created_at: now });
 
     res.status(201).json({ roomId, code, type });
   } catch (error) {
@@ -141,25 +138,22 @@ app.post('/api/rooms/join', async (req, res) => {
     }
 
     const upperCode = code.trim().toUpperCase();
-    const room = await query.get('SELECT * FROM rooms WHERE code = ?', [upperCode]);
+    const room = await store.getRoomByCode(upperCode);
     if (!room) {
       return res.status(404).json({ error: 'Room code not found' });
     }
 
     // Check member limits
-    const members = await query.all('SELECT * FROM members WHERE room_id = ?', [room.id]);
+    const members = await store.getMembers(room.id);
     
     // Check if device is already registered in this room
     const existingMember = members.find(m => m.device_id === device_id);
     if (existingMember) {
       // Re-joining with existing device, update details
-      await query.run(
-        'UPDATE members SET name = ?, label = ? WHERE id = ?',
-        [name, label || '', existingMember.id]
-      );
-      const updatedMembers = await query.all('SELECT * FROM members WHERE room_id = ?', [room.id]);
+      const updatedMember = await store.updateMember(existingMember.id, { name, label: label || '' });
+      const updatedMembers = await store.getMembers(room.id);
       io.to(room.id).emit('members_update', updatedMembers);
-      return res.json({ room, member: { ...existingMember, name, label }, members: updatedMembers });
+      return res.json({ room, member: updatedMember || { ...existingMember, name, label }, members: updatedMembers });
     }
 
     const maxMembers = room.type === 'couple' ? 2 : 5;
@@ -170,12 +164,8 @@ app.post('/api/rooms/join', async (req, res) => {
     const memberId = crypto.randomUUID();
     const now = new Date().toISOString();
 
-    await query.run(
-      'INSERT INTO members (id, room_id, name, label, device_id, joined_at) VALUES (?, ?, ?, ?, ?, ?)',
-      [memberId, room.id, name, label || '', device_id, now]
-    );
-
     const newMember = { id: memberId, room_id: room.id, name, label, device_id, joined_at: now };
+    await store.saveMember(newMember);
     const updatedMembers = [...members, newMember];
 
     io.to(room.id).emit('members_update', updatedMembers);
@@ -257,6 +247,32 @@ app.get('/api/rooms/:roomId/wallpaper/image.svg', async (req, res) => {
       return `<tspan x="600" ${idx === 0 ? `y="${startY}"` : 'dy="1.4em"'}>${escapeHtml(line)}</tspan>`;
     }).join('');
 
+    // Render hand-drawn scribbles (if any)
+    let scribblePaths = '';
+    if (wallpaper && wallpaper.scribbles) {
+      try {
+        const strokes = JSON.parse(wallpaper.scribbles);
+        if (Array.isArray(strokes)) {
+          scribblePaths = strokes.map(stroke => {
+            if (!stroke.points || stroke.points.length < 2) return '';
+            const d = stroke.points.map((pt, i) => {
+              // Convert from 0-1000 coordinate grid to SVG layout (1200x1920)
+              const sx = (pt.x / 1000) * width;
+              const sy = (pt.y / 1000) * height;
+              return `${i === 0 ? 'M' : 'L'} ${sx.toFixed(1)} ${sy.toFixed(1)}`;
+            }).join(' ');
+
+            const strokeColor = stroke.color || '#FFFFFF';
+            const strokeWidth = stroke.width || 4;
+
+            return `<path d="${d}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-linecap="round" stroke-linejoin="round" class="shadow-effect" />`;
+          }).join('\n');
+        }
+      } catch (err) {
+        console.error('Failed to parse scribbles for SVG:', err);
+      }
+    }
+
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
       <defs>
         <linearGradient id="bottomGrad" x1="0" y1="0" x2="0" y2="1">
@@ -289,6 +305,11 @@ app.get('/api/rooms/:roomId/wallpaper/image.svg', async (req, res) => {
       <rect x="0" y="0" width="${width}" height="${height}" fill="black" opacity="0.25" />
       <rect x="0" y="${height - 200}" width="${width}" height="200" fill="url(#bottomGrad)" />
 
+      <!-- Synced Scribbles Layer -->
+      <g id="scribbles">
+        ${scribblePaths}
+      </g>
+
       <!-- Message Text -->
       <text class="${fontClass} shadow-effect" text-anchor="middle" fill="${color}">
         ${tspans}
@@ -312,7 +333,7 @@ app.get('/api/rooms/:roomId/wallpaper/image.svg', async (req, res) => {
 app.post('/api/rooms/:roomId/wallpaper', async (req, res) => {
   try {
     const { roomId } = req.params;
-    const { image_url, message, font, color, position, set_by } = req.body;
+    const { image_url, message, font, color, position, set_by, scribbles } = req.body;
 
     const now = new Date();
     // Message expires in exactly 2.5 hours (150 minutes)
@@ -322,24 +343,21 @@ app.post('/api/rooms/:roomId/wallpaper', async (req, res) => {
     const setAtStr = now.toISOString();
     const expiresAtStr = expiresAt.toISOString();
 
-    // Use sqlite REPLACE INTO to upsert since room_id is unique
-    await query.run(`
-      INSERT OR REPLACE INTO wallpapers (id, room_id, image_url, message, font, color, position, set_by, set_at, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, [wallpaperId, roomId, image_url || '', message || '', font || 'Serif', color || 'white', position || 'Center', set_by || 'Someone', setAtStr, expiresAtStr]);
-
     const updatedWallpaper = {
       id: wallpaperId,
       room_id: roomId,
-      image_url,
-      message,
-      font,
-      color,
-      position,
-      set_by,
+      image_url: image_url || '',
+      message: message || '',
+      font: font || 'Serif',
+      color: color || '#FFFFFF',
+      position: position || 'Center',
+      set_by: set_by || 'Someone',
       set_at: setAtStr,
-      expires_at: expiresAtStr
+      expires_at: expiresAtStr,
+      scribbles: scribbles || ''
     };
+
+    await store.setWallpaper(roomId, updatedWallpaper);
 
     // Sync via socket
     io.to(roomId).emit('wallpaper_update', updatedWallpaper);
@@ -355,7 +373,7 @@ app.post('/api/rooms/:roomId/wallpaper', async (req, res) => {
 app.post('/api/rooms/:roomId/wipe', async (req, res) => {
   try {
     const { roomId } = req.params;
-    await query.run('DELETE FROM wallpapers WHERE room_id = ?', [roomId]);
+    await store.deleteWallpaper(roomId);
 
     // Notify all devices in room
     io.to(roomId).emit('wallpaper_wipe');
@@ -400,6 +418,21 @@ io.on('connection', (socket) => {
     console.log(`Socket ${socket.id} joined Room ${roomId}`);
   });
 
+  // Broadcast real-time drawing strokes to room members
+  socket.on('draw_stroke', ({ roomId, stroke }) => {
+    socket.to(roomId).emit('draw_stroke', stroke);
+  });
+
+  // Broadcast real-time typing sync (keystrokes)
+  socket.on('typing_sync', ({ roomId, data }) => {
+    socket.to(roomId).emit('typing_sync', data);
+  });
+
+  // Broadcast real-time canvas clear to room members
+  socket.on('clear_scribbles', ({ roomId }) => {
+    socket.to(roomId).emit('clear_scribbles');
+  });
+
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });
@@ -411,13 +444,13 @@ io.on('connection', (socket) => {
 setInterval(async () => {
   try {
     const nowStr = new Date().toISOString();
-    const expiredWallpapers = await query.all('SELECT room_id FROM wallpapers WHERE expires_at < ?', [nowStr]);
+    const expiredRoomIds = await store.getExpiredWallpaperRoomIds(nowStr);
     
-    if (expiredWallpapers.length > 0) {
-      console.log(`Found ${expiredWallpapers.length} expired wallpapers. Cleaning up...`);
-      for (const wp of expiredWallpapers) {
-        await query.run('DELETE FROM wallpapers WHERE room_id = ?', [wp.room_id]);
-        io.to(wp.room_id).emit('wallpaper_wipe');
+    if (expiredRoomIds.length > 0) {
+      console.log(`Found ${expiredRoomIds.length} expired wallpapers. Cleaning up...`);
+      for (const roomId of expiredRoomIds) {
+        await store.deleteWallpaper(roomId);
+        io.to(roomId).emit('wallpaper_wipe');
       }
     }
   } catch (error) {
@@ -429,12 +462,7 @@ setInterval(async () => {
 setInterval(async () => {
   try {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-    // Delete rooms created > 30 days ago that don't have active wallpapers (this counts as inactivity)
-    const result = await query.run(`
-      DELETE FROM rooms 
-      WHERE created_at < ? 
-      AND id NOT IN (SELECT room_id FROM wallpapers)
-    `, [thirtyDaysAgo]);
+    const result = await store.cleanupInactiveRooms(thirtyDaysAgo);
     
     if (result.changes > 0) {
       console.log(`Cleaned up ${result.changes} inactive rooms.`);
@@ -446,7 +474,11 @@ setInterval(async () => {
 
 // --- START SERVER ---
 
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
-  console.log(`WhisperWall server running on port ${PORT}`);
-});
+if (!process.env.VERCEL) {
+  const PORT = process.env.PORT || 5000;
+  server.listen(PORT, () => {
+    console.log(`WhisperWall server running on port ${PORT}`);
+  });
+}
+
+export default app;

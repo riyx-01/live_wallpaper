@@ -30,6 +30,7 @@ const App = () => {
   });
 
   const socketRef = useRef(null);
+  const [socketConnected, setSocketConnected] = useState(false);
 
   // Parse path for PWA standalone route support
   useEffect(() => {
@@ -59,6 +60,7 @@ const App = () => {
     socket.on('connect', () => {
       console.log('Connected to realtime sync server');
       socket.emit('join_room', roomId);
+      setSocketConnected(true);
     });
 
     socket.on('wallpaper_update', (wallpaper) => {
@@ -69,12 +71,26 @@ const App = () => {
       setRoomState(prev => ({ ...prev, activeWallpaper: null }));
     });
 
+    socket.on('typing_sync', (data) => {
+      setRoomState(prev => {
+        if (!prev.activeWallpaper) return prev;
+        return {
+          ...prev,
+          activeWallpaper: {
+            ...prev.activeWallpaper,
+            ...data
+          }
+        };
+      });
+    });
+
     socket.on('members_update', (membersList) => {
       setRoomState(prev => ({ ...prev, members: membersList }));
     });
 
     socket.on('disconnect', () => {
       console.log('Realtime sync server disconnected');
+      setSocketConnected(false);
     });
   };
 
@@ -82,8 +98,48 @@ const App = () => {
     if (socketRef.current) {
       socketRef.current.disconnect();
       socketRef.current = null;
+      setSocketConnected(false);
     }
   };
+
+  // Fallback Polling Loop for Vercel/Serverless where Socket.io is blocked
+  useEffect(() => {
+    if (!roomState.room) return;
+
+    const interval = setInterval(async () => {
+      // If socket is not connected (e.g. running on Vercel), run HTTP polling fallback
+      if (!socketConnected) {
+        try {
+          const res = await fetch(`/api/rooms/${roomState.room.id}/wallpaper`);
+          if (res.ok) {
+            const data = await res.json();
+            // Only update if the wallpaper payload actually changed to prevent blanking or looping
+            const currentWp = roomState.activeWallpaper;
+            const newWp = data.wallpaper;
+            
+            const isChanged = !currentWp && newWp ||
+                              currentWp && !newWp ||
+                              currentWp && newWp && (
+                                currentWp.id !== newWp.id ||
+                                currentWp.message !== newWp.message ||
+                                currentWp.font !== newWp.font ||
+                                currentWp.color !== newWp.color ||
+                                currentWp.position !== newWp.position ||
+                                currentWp.scribbles !== newWp.scribbles
+                              );
+
+            if (isChanged) {
+              setRoomState(prev => ({ ...prev, activeWallpaper: newWp }));
+            }
+          }
+        } catch (err) {
+          console.log("Polling fallback error (expected under cold start):", err);
+        }
+      }
+    }, 1500); // Poll every 1.5 seconds
+
+    return () => clearInterval(interval);
+  }, [roomState.room, roomState.activeWallpaper, socketConnected]);
 
   const reconnectToRoom = async (room, member, targetView = 'studio') => {
     setLoading(true);
@@ -330,6 +386,7 @@ const App = () => {
             onWipeWallpaper={handleWipeWallpaper}
             onLeaveRoom={handleLeaveRoom}
             onEnterWallpaperCanvas={() => setView('wallpaper')}
+            socket={socketRef.current}
           />
         )}
 
@@ -337,6 +394,8 @@ const App = () => {
           <WallpaperCanvas
             roomState={roomState}
             onBackToStudio={() => setView('studio')}
+            onSetWallpaper={handleSetWallpaper}
+            socket={socketRef.current}
           />
         )}
       </main>
