@@ -18,6 +18,20 @@ const generateUUID = () => {
   });
 };
 
+const apiJson = async (url, options = {}) => {
+  const response = await fetch(url, options);
+  const contentType = response.headers.get('content-type') || '';
+  const body = contentType.includes('application/json')
+    ? await response.json()
+    : { error: await response.text() };
+
+  if (!response.ok) {
+    throw new Error(body.error || `Request failed with status ${response.status}`);
+  }
+
+  return body;
+};
+
 const App = () => {
   const [view, setView] = useState('landing'); // 'landing' | 'onboarding' | 'studio' | 'wallpaper'
   const [roomType, setRoomType] = useState('couple');
@@ -110,9 +124,7 @@ const App = () => {
       // If socket is not connected (e.g. running on Vercel), run HTTP polling fallback
       if (!socketConnected) {
         try {
-          const res = await fetch(`/api/rooms/${roomState.room.id}/wallpaper`);
-          if (res.ok) {
-            const data = await res.json();
+          const data = await apiJson(`/api/rooms/${roomState.room.id}/wallpaper`);
             // Only update if the wallpaper payload actually changed to prevent blanking or looping
             const currentWp = roomState.activeWallpaper;
             const newWp = data.wallpaper;
@@ -131,7 +143,6 @@ const App = () => {
             if (isChanged) {
               setRoomState(prev => ({ ...prev, activeWallpaper: newWp }));
             }
-          }
         } catch (err) {
           console.log("Polling fallback error (expected under cold start):", err);
         }
@@ -145,11 +156,10 @@ const App = () => {
     setLoading(true);
     try {
       // Fetch latest wallpaper and members
-      const wallpaperRes = await fetch(`/api/rooms/${room.id}/wallpaper`);
-      const wallpaperData = await wallpaperRes.json();
+      const wallpaperData = await apiJson(`/api/rooms/${room.id}/wallpaper`);
 
       // Retrieve all members in room
-      const membersRes = await fetch(`/api/rooms/join`, {
+      const joinData = await apiJson(`/api/rooms/join`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -159,12 +169,6 @@ const App = () => {
           device_id: member.device_id
         })
       });
-      
-      if (!membersRes.ok) {
-        throw new Error('Failed to rejoin room');
-      }
-
-      const joinData = await membersRes.json();
 
       setRoomState({
         room: joinData.room,
@@ -191,12 +195,11 @@ const App = () => {
     setLoading(true);
     try {
       // Create room record
-      const roomRes = await fetch('/api/rooms', {
+      const roomData = await apiJson('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type })
       });
-      const roomData = await roomRes.json();
 
       // Join room as creator
       // Generate device ID
@@ -206,7 +209,7 @@ const App = () => {
         localStorage.setItem('ww_device_id', deviceId);
       }
 
-      const joinRes = await fetch('/api/rooms/join', {
+      const joinData = await apiJson('/api/rooms/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -216,7 +219,6 @@ const App = () => {
           device_id: deviceId
         })
       });
-      const joinData = await joinRes.json();
 
       // Save credentials
       localStorage.setItem('ww_room', JSON.stringify(joinData.room));
@@ -249,7 +251,7 @@ const App = () => {
         localStorage.setItem('ww_device_id', deviceId);
       }
 
-      const joinRes = await fetch('/api/rooms/join', {
+      const joinData = await apiJson('/api/rooms/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -260,16 +262,8 @@ const App = () => {
         })
       });
 
-      if (!joinRes.ok) {
-        const err = await joinRes.json();
-        throw new Error(err.error || 'Failed to join room');
-      }
-
-      const joinData = await joinRes.json();
-
       // Fetch active wallpaper state
-      const wpRes = await fetch(`/api/rooms/${joinData.room.id}/wallpaper`);
-      const wpData = await wpRes.json();
+      const wpData = await apiJson(`/api/rooms/${joinData.room.id}/wallpaper`);
 
       localStorage.setItem('ww_room', JSON.stringify(joinData.room));
       localStorage.setItem('ww_member', JSON.stringify(joinData.member));
@@ -295,12 +289,11 @@ const App = () => {
   // 3. Set Wallpaper Flow
   const handleSetWallpaper = async (payload) => {
     try {
-      const response = await fetch(`/api/rooms/${roomState.room.id}/wallpaper`, {
+      const data = await apiJson(`/api/rooms/${roomState.room.id}/wallpaper`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const data = await response.json();
       setRoomState(prev => ({ ...prev, activeWallpaper: data.wallpaper }));
       return data.wallpaper;
     } catch (error) {
@@ -312,7 +305,7 @@ const App = () => {
   // 4. Wipe Wallpaper Flow
   const handleWipeWallpaper = async () => {
     try {
-      await fetch(`/api/rooms/${roomState.room.id}/wipe`, {
+      await apiJson(`/api/rooms/${roomState.room.id}/wipe`, {
         method: 'POST'
       });
       setRoomState(prev => ({ ...prev, activeWallpaper: null }));
