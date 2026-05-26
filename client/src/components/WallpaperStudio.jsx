@@ -111,6 +111,7 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
 
   // PWA Install Prompt Modal
   const [showPwaModal, setShowPwaModal] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [isWiping, setIsWiping] = useState(false);
 
@@ -650,65 +651,113 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
 
         </section>
 
-      </div>
+        {/* PWA INSTALL AND INSTRUCTIONS MODAL */}
+        {showPwaModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in overflow-y-auto">
+            <div className="glass-card-pink max-w-lg w-full rounded-[32px] p-6 border border-theme-primary/30 shadow-2xl relative my-8">
+              <h3 className="text-xl font-extrabold text-theme-dark mb-2 text-center flex items-center justify-center gap-1.5">
+                Wallpaper Updated! 💕
+              </h3>
+              
+              <p className="text-xs text-theme-dark/80 mb-4 text-center leading-relaxed">
+                Your message has been updated and synced. Choose your platform below to set this as your actual background:
+              </p>
 
-      {/* PWA INSTALL AND INSTRUCTIONS MODAL */}
-      {showPwaModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in">
-          <div className="glass-card-pink max-w-md w-full rounded-[32px] p-6 border border-theme-primary/30 shadow-2xl relative">
-            <h3 className="text-xl font-extrabold text-theme-dark mb-2 text-center flex items-center justify-center gap-1.5">
-              Wallpaper Updated! 💕
-            </h3>
-            
-            <p className="text-xs text-theme-dark/80 mb-6 text-center leading-relaxed">
-              Your note has been synced in real time. To set this as your actual homescreen or lockscreen wallpaper, follow these instructions:
-            </p>
-
-            <div className="space-y-4 mb-6">
-              {/* Step 1: Install PWA */}
-              <div className="bg-white/50 border border-white/70 rounded-2xl p-4 flex gap-3 items-start">
-                <div className="p-2 bg-theme-primary/10 rounded-xl text-theme-primary shrink-0">
-                  <Smartphone className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="font-bold text-xs text-theme-dark mb-0.5">1. Install WhisperWall</h4>
-                  <p className="text-[10px] text-theme-dark/80 leading-normal">
-                    {isIOS() ? (
-                      <span>Tap Safari's <span className="font-bold">Share</span> button, then select <span className="font-bold">Add to Home Screen</span>.</span>
-                    ) : isAndroid() ? (
-                      <span>Tap Chrome's <span className="font-bold">Menu (three dots)</span>, then select <span className="font-bold">Install App</span> or <span className="font-bold">Add to Home screen</span>.</span>
-                    ) : (
-                      <span>Open in Chrome/Safari on your mobile device, open settings, and select <span className="font-bold">Install</span>.</span>
-                    )}
-                  </p>
+              {/* Dynamic Link Copy Section */}
+              <div className="mb-6 p-4 bg-white/50 border border-theme-accent/30 rounded-2xl">
+                <span className="block text-[10px] font-bold text-theme-dark/60 uppercase tracking-wider mb-1.5">
+                  Your Dynamic Image Link (for iPhone / OS integrations)
+                </span>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={`${window.location.origin}/api/rooms/${room.id}/wallpaper/image.svg`}
+                    className="flex-1 text-[11px] font-mono bg-white/80 border border-theme-accent/40 rounded-xl px-3 py-2 text-theme-dark select-all"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`${window.location.origin}/api/rooms/${room.id}/wallpaper/image.svg`);
+                      setCopiedLink(true);
+                      setTimeout(() => setCopiedLink(false), 2000);
+                    }}
+                    className="glass-button-primary px-3.5 rounded-xl font-bold text-xs shrink-0"
+                  >
+                    {copiedLink ? 'Copied! ✨' : 'Copy'}
+                  </button>
                 </div>
               </div>
 
-              {/* Step 2: Open and Use widget instructions */}
-              <div className="bg-white/50 border border-white/70 rounded-2xl p-4 flex gap-3 items-start">
-                <div className="p-2 bg-theme-primary/10 rounded-xl text-theme-primary shrink-0">
-                  <Heart className="w-5 h-5 fill-current" />
+              <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
+                
+                {/* iPhone / iOS Guide */}
+                <div className="bg-white/40 border border-theme-accent/20 rounded-2xl p-4">
+                  <h4 className="font-extrabold text-xs text-theme-dark flex items-center gap-1.5 mb-2">
+                    <span>🍎</span> iPhone / iOS (Automated Lockscreen)
+                  </h4>
+                  <ol className="text-[10px] text-theme-dark/80 space-y-1.5 list-decimal pl-4 leading-normal">
+                    <li>Copy the <b>Dynamic Image Link</b> above.</li>
+                    <li>Open the built-in <b>Shortcuts</b> app on your iPhone.</li>
+                    <li>Create a new shortcut, add the action <b>Get Contents of URL</b>, and paste the link.</li>
+                    <li>Add the action <b>Set Wallpaper</b> and configure it to use the URL contents.</li>
+                    <li>Go to the <b>Automation</b> tab in Shortcuts, and set it to run automatically (e.g. at a specific time, on App Open, or when Sleep mode changes) so it updates silently in the background!</li>
+                  </ol>
                 </div>
-                <div>
-                  <h4 className="font-bold text-xs text-theme-dark mb-0.5">2. Set as Lockscreen / Widget</h4>
-                  <p className="text-[10px] text-theme-dark/80 leading-normal">
-                    Open the installed <span className="font-bold">WhisperWall PWA</span> from your home screen. It will open in full-bleed mode. Lock your device, or use your phone's native lockscreen features to set this active web view as your lockscreen wallpaper/widget!
-                  </p>
+
+                {/* Mac / macOS Guide */}
+                <div className="bg-white/40 border border-theme-accent/20 rounded-2xl p-4">
+                  <h4 className="font-extrabold text-xs text-theme-dark flex items-center gap-1.5 mb-2">
+                    <span>💻</span> Mac / macOS (Live Active Wallpaper)
+                  </h4>
+                  <ol className="text-[10px] text-theme-dark/80 space-y-1.5 list-decimal pl-4 leading-normal">
+                    <li>Install the free open-source app <b>Plash</b> (available on the Mac App Store).</li>
+                    <li>Open Plash and set the Website URL to your live canvas link:<br/>
+                      <span className="font-mono font-bold select-all bg-white/50 px-1 py-0.5 rounded">{window.location.origin}/wallpaper</span>
+                    </li>
+                    <li>Plash will run in the background, rendering the webpage directly on your desktop! Floating hearts and sync will update interactively in real time.</li>
+                  </ol>
                 </div>
+
+                {/* Windows Guide */}
+                <div className="bg-white/40 border border-theme-accent/20 rounded-2xl p-4">
+                  <h4 className="font-extrabold text-xs text-theme-dark flex items-center gap-1.5 mb-2">
+                    <span>🪟</span> Windows (Live Wallpaper)
+                  </h4>
+                  <ol className="text-[10px] text-theme-dark/80 space-y-1.5 list-decimal pl-4 leading-normal">
+                    <li>Download the free open-source app <b>Lively Wallpaper</b> (from Microsoft Store or GitHub).</li>
+                    <li>Click <b>Add Wallpaper</b>, select **URL**, and enter:<br/>
+                      <span className="font-mono font-bold select-all bg-white/50 px-1 py-0.5 rounded">{window.location.origin}/wallpaper</span>
+                    </li>
+                    <li>It will render WhisperWall live on your desktop, automatically syncing whenever a new message is sent.</li>
+                  </ol>
+                </div>
+
+                {/* Android Guide */}
+                <div className="bg-white/40 border border-theme-accent/20 rounded-2xl p-4">
+                  <h4 className="font-extrabold text-xs text-theme-dark flex items-center gap-1.5 mb-2">
+                    <span>🤖</span> Android
+                  </h4>
+                  <ol className="text-[10px] text-theme-dark/80 space-y-1.5 list-decimal pl-4 leading-normal">
+                    <li>Use a free app like <b>Web Live Wallpaper</b> from the Play Store.</li>
+                    <li>Set the wallpaper URL to: <span className="font-mono font-bold select-all bg-white/50 px-1 py-0.5 rounded">{window.location.origin}/wallpaper</span></li>
+                    <li>Confirm and set as active lockscreen/homescreen.</li>
+                  </ol>
+                </div>
+
               </div>
+
+              <button
+                onClick={() => setShowPwaModal(false)}
+                className="glass-button-primary w-full py-3 rounded-2xl font-bold text-sm mt-6"
+              >
+                Got it, let's connect! 💌
+              </button>
             </div>
-
-            <button
-              onClick={() => setShowPwaModal(false)}
-              className="glass-button-primary w-full py-3 rounded-2xl font-bold text-sm"
-            >
-              Got it, thanks! 💌
-            </button>
           </div>
-        </div>
-      )}
-    </div>
-  );
-};
+        )}
+      </div>
+    );
+  };
 
-export default WallpaperStudio;
+  export default WallpaperStudio;

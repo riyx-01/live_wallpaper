@@ -199,6 +199,115 @@ app.get('/api/rooms/:roomId/wallpaper', async (req, res) => {
   }
 });
 
+// Dynamic SVG image for lockscreen wallpapers (e.g. iOS Shortcuts)
+app.get('/api/rooms/:roomId/wallpaper/image.svg', async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const wallpaper = await checkWallpaperExpiry(roomId);
+    
+    // Default dimensions (suitable for phone lockscreens)
+    const width = 1200;
+    const height = 1920;
+    
+    let imageUrl = '';
+    let message = 'Waiting for a note...';
+    let fontClass = 'font-Serif';
+    let color = '#E88FA0';
+    let position = 'Center';
+    let setBy = 'WhisperWall';
+    
+    if (wallpaper) {
+      const rawImgUrl = wallpaper.image_url || '';
+      imageUrl = rawImgUrl.startsWith('http') 
+        ? rawImgUrl 
+        : `${req.protocol}://${req.get('host')}${rawImgUrl}`;
+      message = wallpaper.message || '';
+      fontClass = `font-${wallpaper.font || 'Serif'}`;
+      color = wallpaper.color || '#FFFFFF';
+      position = wallpaper.position || 'Center';
+      setBy = wallpaper.set_by ? `From ${wallpaper.set_by}` : 'WhisperWall';
+    } else {
+      // Soft default background if empty
+      imageUrl = `https://images.unsplash.com/photo-1531265726475-52ad60219627?auto=format&fit=crop&w=1200&q=80`;
+    }
+    
+    // Escape HTML text helper
+    const escapeHtml = (str) => {
+      if (!str) return '';
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+    };
+    
+    // Split lines for SVG tspan rendering
+    const lines = message.split('\n');
+    let startY = 960; // Center
+    if (position === 'Top') {
+      startY = 350;
+    } else if (position === 'Bottom') {
+      startY = 1500;
+    }
+    
+    // Adjust startY for multi-line vertical alignment centering
+    if (position === 'Center') {
+      const fontSizeEst = 64; // average font size
+      const totalTextHeight = lines.length * fontSizeEst * 1.3;
+      startY = (height / 2) - (totalTextHeight / 2) + (fontSizeEst / 2);
+    }
+    
+    const tspans = lines.map((line, idx) => {
+      return `<tspan x="600" ${idx === 0 ? `y="${startY}"` : 'dy="1.4em"'}>${escapeHtml(line)}</tspan>`;
+    }).join('');
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <defs>
+        <linearGradient id="bottomGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="black" stop-opacity="0" />
+          <stop offset="100%" stop-color="black" stop-opacity="0.45" />
+        </linearGradient>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&family=Inter:wght@400;700&family=Outfit:wght@600;800&family=Playfair+Display:ital,wght@0,600;1,600&display=swap');
+          .font-Serif { font-family: 'Playfair Display', serif; font-size: 64px; }
+          .font-Handwritten { font-family: 'Dancing Script', cursive; font-size: 84px; }
+          .font-Sans { font-family: 'Inter', sans-serif; font-weight: bold; font-size: 60px; }
+          .font-Bold { font-family: 'Outfit', sans-serif; font-weight: 800; font-size: 72px; }
+          .shadow-effect {
+            filter: drop-shadow(2px 4px 8px rgba(0, 0, 0, 0.45)) drop-shadow(0px 1px 3px rgba(0, 0, 0, 0.2));
+          }
+          .signature {
+            font-family: 'Outfit', sans-serif;
+            font-size: 24px;
+            font-weight: 600;
+            letter-spacing: 4px;
+            fill: rgba(255, 255, 255, 0.7);
+          }
+        </style>
+      </defs>
+      
+      <!-- Background Image -->
+      <image href="${imageUrl}" x="0" y="0" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" />
+      
+      <!-- Dark Vignette Overlay -->
+      <rect x="0" y="0" width="${width}" height="${height}" fill="black" opacity="0.25" />
+      <rect x="0" y="${height - 200}" width="${width}" height="200" fill="url(#bottomGrad)" />
+
+      <!-- Message Text -->
+      <text class="${fontClass} shadow-effect" text-anchor="middle" fill="${color}">
+        ${tspans}
+      </text>
+      
+      <!-- Signature / From Info at bottom -->
+      <text class="signature shadow-effect" x="600" y="${height - 80}" text-anchor="middle">
+        ${escapeHtml(setBy).toUpperCase()}
+      </text>
+    </svg>`;
+    
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.send(svg);
+  } catch (error) {
+    console.error('Error generating wallpaper image:', error);
+    res.status(500).send('Internal server error');
+  }
+});
+
 // Set Wallpaper
 app.post('/api/rooms/:roomId/wallpaper', async (req, res) => {
   try {
