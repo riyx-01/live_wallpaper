@@ -144,15 +144,15 @@ const WallpaperCanvas = ({ roomState, onBackToStudio }) => {
 
       {/* Live Text Overlay Layer */}
       {wallpaper?.message && (
-        <div className={`absolute inset-0 flex flex-col p-8 text-center select-none pointer-events-none break-words z-10 ${getPositionClass(wallpaper.position)}`}>
+        <div className={`absolute inset-0 flex flex-col p-8 md:p-16 text-center select-none pointer-events-none break-words z-10 ${getPositionClass(wallpaper.position)}`}>
           <p 
             key={wallpaper.message} // trigger fade-in animation on text change
-            className={`text-3xl md:text-5xl leading-relaxed whitespace-pre-wrap select-none animate-fade-in ${getFontFamilyClass(wallpaper.font)} ${
+            className={`whitespace-pre-wrap select-none animate-fade-in ${getFontFamilyClass(wallpaper.font)} ${
               wallpaper.color === '#FFFFFF' || wallpaper.color === '#FDF0DC' || wallpaper.color === '#FFB7C5' || wallpaper.color === '#D4A96A'
                 ? 'text-stroke-subtle' 
                 : 'text-stroke-subtle-light'
             }`}
-            style={{ color: wallpaper.color }}
+            style={{ color: wallpaper.color, fontSize: 'clamp(1.8rem, 4.5vw, 5.5rem)', lineHeight: '1.4' }}
           >
             {wallpaper.message}
           </p>

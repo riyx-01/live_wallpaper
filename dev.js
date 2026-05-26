@@ -52,23 +52,33 @@ client.stderr.on('data', (data) => {
   }
 });
 
+const safeKill = (child) => {
+  try {
+    if (child) {
+      child.kill();
+    }
+  } catch (e) {
+    // ignore
+  }
+};
+
 // Handle exits
 server.on('close', (code) => {
   console.log(`${CYAN}[server]${RESET} exited with code ${code}`);
-  client.kill();
+  safeKill(client);
   process.exit(code);
 });
 
 client.on('close', (code) => {
   console.log(`${MAGENTA}[client]${RESET} exited with code ${code}`);
-  server.kill();
+  safeKill(server);
   process.exit(code);
 });
 
 // Forward Ctrl+C to both children
 process.on('SIGINT', () => {
   console.log(`\n${GREEN}Shutting down...${RESET}`);
-  server.kill();
-  client.kill();
+  safeKill(server);
+  safeKill(client);
   process.exit(0);
 });

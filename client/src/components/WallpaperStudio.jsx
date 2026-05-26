@@ -98,6 +98,7 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
   const [font, setFont] = useState(activeWallpaper?.font || 'Serif');
   const [color, setColor] = useState(activeWallpaper?.color || '#FFFFFF');
   const [position, setPosition] = useState(activeWallpaper?.position || 'Center');
+  const [previewFormat, setPreviewFormat] = useState('mobile'); // 'mobile' | 'laptop'
 
   // File Upload State
   const [uploading, setUploading] = useState(false);
@@ -437,14 +438,42 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
         <section className="lg:col-span-7 grid grid-cols-1 md:grid-cols-12 gap-6 w-full items-stretch">
           
           {/* Live Wallpaper Preview Card (5/12 of right column) */}
-          <div className="md:col-span-5 flex flex-col justify-center">
+          <div className="md:col-span-5 flex flex-col justify-center gap-3">
+            {/* Format toggle controls */}
+            <div className="flex bg-white/40 border border-theme-accent/20 rounded-2xl p-1 shrink-0 self-center">
+              <button
+                type="button"
+                onClick={() => setPreviewFormat('mobile')}
+                className={`px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all ${
+                  previewFormat === 'mobile'
+                    ? 'bg-theme-primary text-white shadow-sm'
+                    : 'text-theme-dark/70 hover:text-theme-dark'
+                }`}
+              >
+                📱 Mobile
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewFormat('laptop')}
+                className={`px-3 py-1.5 rounded-xl text-[10px] font-bold transition-all ${
+                  previewFormat === 'laptop'
+                    ? 'bg-theme-primary text-white shadow-sm'
+                    : 'text-theme-dark/70 hover:text-theme-dark'
+                }`}
+              >
+                💻 Laptop / Mac
+              </button>
+            </div>
+
             <div className="glass-card rounded-[32px] p-3 shadow-soft border border-white/50 relative overflow-hidden">
               <span className="block text-[10px] font-bold text-center text-theme-dark/60 mb-2">
-                Live Preview
+                Live Preview ({previewFormat === 'mobile' ? 'Portrait' : 'Landscape'})
               </span>
 
-              {/* Aspect Ratio 9:16 Mockup Canvas */}
-              <div className="relative aspect-[9/16] w-full rounded-[24px] overflow-hidden bg-theme-bg shadow-inner border border-theme-accent/20 select-none">
+              {/* Dynamic Aspect Ratio Mockup Canvas */}
+              <div className={`relative w-full rounded-[24px] overflow-hidden bg-theme-bg shadow-inner border border-theme-accent/20 select-none transition-all duration-300 ${
+                previewFormat === 'mobile' ? 'aspect-[9/16]' : 'aspect-[16/10]'
+              }`}>
                 {/* Image */}
                 <img
                   src={selectedImage}
@@ -459,28 +488,39 @@ const WallpaperStudio = ({ roomState, onSetWallpaper, onWipeWallpaper, onLeaveRo
                 {message && (
                   <div className={`absolute inset-0 flex flex-col p-6 text-center select-none pointer-events-none break-words ${getPositionClass(position)}`}>
                     <p 
-                      className={`text-2xl leading-relaxed whitespace-pre-wrap font-bold select-none ${getFontFamilyClass(font)} ${
+                      className={`leading-relaxed whitespace-pre-wrap font-bold select-none ${getFontFamilyClass(font)} ${
                         color === '#FFFFFF' || color === '#FDF0DC' || color === '#FFB7C5' || color === '#D4A96A'
                           ? 'text-stroke-subtle' 
                           : 'text-stroke-subtle-light'
                       }`}
-                      style={{ color: color }}
+                      style={{ color: color, fontSize: previewFormat === 'mobile' ? '1.2rem' : '1.6rem', lineHeight: '1.4' }}
                     >
                       {message}
                     </p>
                   </div>
                 )}
 
-                {/* Mockup Screen Accents (Status bar) */}
-                <div className="absolute top-2 inset-x-0 px-4 flex justify-between items-center text-white/80 text-[8px] font-bold pointer-events-none drop-shadow-sm">
-                  <span>9:41 🌙</span>
-                  <div className="flex items-center gap-1">
-                    <span>LTE</span>
-                    <div className="w-4 h-2 border border-white/60 rounded-[2px] p-[1px] flex items-center">
-                      <div className="w-full h-full bg-white rounded-[1px]"></div>
+                {/* Mockup Screen Accents */}
+                {previewFormat === 'mobile' ? (
+                  <div className="absolute top-2 inset-x-0 px-4 flex justify-between items-center text-white/80 text-[8px] font-bold pointer-events-none drop-shadow-sm">
+                    <span>9:41 🌙</span>
+                    <div className="flex items-center gap-1">
+                      <span>LTE</span>
+                      <div className="w-4 h-2 border border-white/60 rounded-[2px] p-[1px] flex items-center">
+                        <div className="w-full h-full bg-white rounded-[1px]"></div>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="absolute top-2 inset-x-0 px-4 flex justify-between items-center text-white/80 text-[8px] font-bold pointer-events-none drop-shadow-sm">
+                    <div className="flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-400/80"></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-yellow-400/80"></span>
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-400/80"></span>
+                    </div>
+                    <span>MacBook Desktop Mockup 🌸</span>
+                  </div>
+                )}
 
                 {/* Mockup Lock Screen Signature */}
                 {message && (
