@@ -1,0 +1,25 @@
+{
+  "short_name": "WhisperWall",
+  "name": "WhisperWall — Live Couple Wallpaper",
+  "description": "Shared live wallpaper experience for couples and families.",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "maskable"
+    }
+  ],
+  "start_url": "/wallpaper",
+  "background_color": "#FFF5F7",
+  "theme_color": "#FFF5F7",
+  "display": "standalone",
+  "orientation": "portrait",
+  "scope": "/"
+}

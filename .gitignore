@@ -1,0 +1,9 @@
+node_modules/
+server/uploads/
+server/whisperwall.db
+client/dist/
+.env
+.env.local
+*.log
+powershell.cmd
+
